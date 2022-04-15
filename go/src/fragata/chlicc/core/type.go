@@ -365,7 +365,7 @@ func AddType(node *Node) {
         node.ty = node.lhs.ty
         return
     case ND_VAR, ND_VLA_PTR:
-        node.ty = node.varObj.ty
+        node.ty = node.sym.ty
         return
     case ND_COND:
         if node.then.ty.kind == TY_VOID || node.els.ty.kind == TY_VOID {

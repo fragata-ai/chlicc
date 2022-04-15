@@ -119,6 +119,12 @@ func DirName(path string) string {
     return filepath.Dir(path)
 }
 
+func Assert(cond bool) {
+    if !cond {
+        panic("Assertion failed")
+    }
+}
+
 func Unreachable() {
     panic("Unreachable")
 }

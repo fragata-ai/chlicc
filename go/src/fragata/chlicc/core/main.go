@@ -19,7 +19,7 @@ package core
 import (
     "bytes"
     "fmt"
-//    "io/ioutil"
+    "io/ioutil"
     "os"
 )
 
@@ -28,6 +28,8 @@ import (
 //
 
 type Options struct {
+    OptFcommon bool
+    OptFpic bool
     OptInclude []string
     OptE bool
     OptM bool
@@ -198,15 +200,13 @@ func Compile(opt *Options) error {
     var buf bytes.Buffer
 
     // Traverse the AST to emit assembly.
-    Codegen(prog, &buf)
+    Codegen(prog, &buf, opt)
 
-/*
     // Write the asembly text to a file.
     err = ioutil.WriteFile(opt.OutputFile, buf.Bytes(), 0666)
     if err != nil {
         return err
     }
-*/
 
     return nil
 }

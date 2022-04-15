@@ -8,8 +8,8 @@ a beautiful small C compiler created by Rui Ueyama.
 chlicc has been created by porting the original chibicc code to Go.
 It aims at supporting the same functionality as the original software.
 
-chlicc is work in progress. The code generator for x64 is not yet implemented
-(but expected soon) and the command line interface is simplified.
+chlicc is work in progress. The code generator for x64 has not been 
+tested yet and the command line interface is simplified.
 
 We named the compiler following the conventions of the original
 code: in "chlicc" (pronounced as _khlee see see_) "chli" means "small" in

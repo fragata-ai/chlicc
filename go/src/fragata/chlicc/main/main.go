@@ -24,23 +24,26 @@ import (
 
 func main() {
     args := os.Args
-    if len(args) != 2 {
-        fmt.Fprintf(os.Stderr, "Usage: chlicc <input>\n")
+    if len(args) != 3 {
+        fmt.Fprintf(os.Stderr, "Usage: chlicc <input> <output>\n")
         os.Exit(1)
     }
     input := args[1]
-    err := Main(input)
+    output := args[2]
+    err := Main(input, output)
     if err != nil {
         fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
         os.Exit(1)
     }
 }
 
-func Main(input string) error {
+func Main(input string, output string) error {
     core.InitMacros()
     opt := &core.Options{
         IncludePaths: []string{"test", "include"},
         BaseFile: input,
+        OutputFile: output,
+        OptFcommon: true, // default
     }
     err := core.Compile(opt)
     if err != nil {

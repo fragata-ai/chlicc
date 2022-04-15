@@ -195,7 +195,7 @@ type Node struct {
     atomicExpr *Node
 
     // Variable
-    varObj *Obj
+    sym *Obj
 
     // Numeric literal
     val int64
@@ -213,7 +213,7 @@ type Node struct {
 // Scope for local variables, global variables, typedefs
 // or enum constants
 type VarScope struct {
-    varObj *Obj
+    sym *Obj
     typeDef *Type
     enumTy *Type
     enumVal int
@@ -282,7 +282,7 @@ type InitDesg struct {
     next *InitDesg
     idx int
     member *Member
-    varObj *Obj
+    sym *Obj
 }
 
 //
@@ -429,15 +429,15 @@ func newUlong(val int64, tok *Token) *Node {
     return node
 }
 
-func newVarNode(varObj *Obj, tok *Token) *Node {
+func newVarNode(sym *Obj, tok *Token) *Node {
     node := newNode(ND_VAR, tok)
-    node.varObj = varObj
+    node.sym = sym
     return node
 }
 
-func newVlaPtr(varObj *Obj, tok *Token) *Node {
+func newVlaPtr(sym *Obj, tok *Token) *Node {
     node := newNode(ND_VLA_PTR, tok)
-    node.varObj = varObj
+    node.sym = sym
     return node
 }
 
@@ -504,7 +504,7 @@ func newVar(name string, ty *Type) *Obj {
     obj.name = name
     obj.ty = ty
     obj.align = ty.align
-    pushScope(name).varObj = obj
+    pushScope(name).sym = obj
     return obj
 }
 
@@ -1107,11 +1107,11 @@ func declaration(tok *Token, basety *Type, attr *VarAttr) (rest *Token, out *Nod
 
         if attr != nil && attr.isStatic {
             // static local variable
-            varObj := newAnonGvar(ty)
+            sym := newAnonGvar(ty)
             sc := pushScope(getIdent(ty.name))
-            sc.varObj = varObj
+            sc.sym = sym
             if Equal(tok, "=") {
-                tok = gvarInitializer(tok.next, varObj)
+                tok = gvarInitializer(tok.next, sym)
             }
             continue
         }
@@ -1130,12 +1130,12 @@ func declaration(tok *Token, basety *Type, attr *VarAttr) (rest *Token, out *Nod
             // Variable length arrays (VLAs) are translated to alloca() calls.
             // For example, `int x[n+2]` is translated to `tmp = n + 2,
             // x = alloca(tmp)`.
-            varObj := newLvar(getIdent(ty.name), ty)
+            sym := newLvar(getIdent(ty.name), ty)
             tok := ty.name // TODO: Rename 'tok'?
             expr := 
                 newBinary(
                     ND_ASSIGN, 
-                    newVlaPtr(varObj, tok),
+                    newVlaPtr(sym, tok),
                     newAlloca(newVarNode(ty.vlaSize, tok)),
                     tok)
 
@@ -1144,22 +1144,22 @@ func declaration(tok *Token, basety *Type, attr *VarAttr) (rest *Token, out *Nod
             continue
         }
 
-        varObj := newLvar(getIdent(ty.name), ty)
+        sym := newLvar(getIdent(ty.name), ty)
         if attr != nil && attr.align != 0 {
-            varObj.align = attr.align
+            sym.align = attr.align
         }
 
         if Equal(tok, "=") {
             var expr *Node
-            tok, expr = lvarInitializer(tok.next, varObj)
+            tok, expr = lvarInitializer(tok.next, sym)
             cur.next = newUnary(ND_EXPR_STMT, expr, tok)
             cur = cur.next
         }
 
-        if varObj.ty.size < 0 {
+        if sym.ty.size < 0 {
             ErrorTok(ty.name, "variable has incomplete type")
         }
-        if varObj.ty.kind == TY_VOID {
+        if sym.ty.kind == TY_VOID {
             ErrorTok(ty.name, "variable declared void")
         }
     }
@@ -1629,8 +1629,8 @@ func initializer(tok *Token, ty *Type) (rest *Token, init *Initializer, newTy *T
 }
 
 func initDesgExpr(desg *InitDesg, tok *Token) *Node {
-    if desg.varObj != nil {
-        return newVarNode(desg.varObj, tok)
+    if desg.sym != nil {
+        return newVarNode(desg.sym, tok)
     }
 
     if desg.member != nil {
@@ -1692,19 +1692,19 @@ func createLvarInit(init *Initializer, ty *Type, desg *InitDesg, tok *Token) *No
 //   x[0][1] = 7;
 //   x[1][0] = 8;
 //   x[1][1] = 9;
-func lvarInitializer(tok *Token, varObj *Obj) (rest *Token, out *Node) {
+func lvarInitializer(tok *Token, sym *Obj) (rest *Token, out *Node) {
     var init *Initializer
-    rest, init, varObj.ty = initializer(tok, varObj.ty)
-    var desg = InitDesg{next: nil, idx: 0, member: nil, varObj: varObj}
+    rest, init, sym.ty = initializer(tok, sym.ty)
+    var desg = InitDesg{next: nil, idx: 0, member: nil, sym: sym}
 
     // If a partial initializer list is given, the standard requires
     // that unspecified elements are set to 0. Here, we simply
     // zero-initialize the entire memory region of a variable before
     // initializing it with user-supplied values.
     lhs := newNode(ND_MEMZERO, tok)
-    lhs.varObj = varObj
+    lhs.sym = sym
 
-    rhs := createLvarInit(init, varObj.ty, &desg, tok)
+    rhs := createLvarInit(init, sym.ty, &desg, tok)
     out = newBinary(ND_COMMA, lhs, rhs, tok)
     return
 }
@@ -1840,15 +1840,15 @@ func writeGvarData(
 // embedded to .data section. This function serializes Initializer
 // objects to a flat byte array. It is a compile error if an
 // initializer list contains a non-constant expression.
-func gvarInitializer(tok *Token, varObj *Obj) *Token {
-    rest, init, ty := initializer(tok, varObj.ty)
-    varObj.ty = ty
+func gvarInitializer(tok *Token, sym *Obj) *Token {
+    rest, init, ty := initializer(tok, sym.ty)
+    sym.ty = ty
 
     var head Relocation
-    buf := make([]byte, varObj.ty.size)
-    writeGvarData(&head, init, varObj.ty, buf, 0)
-    varObj.initData = buf
-    varObj.rel = head.next
+    buf := make([]byte, sym.ty.size)
+    writeGvarData(&head, init, sym.ty, buf, 0)
+    sym.initData = buf
+    sym.rel = head.next
 
     return rest
 }
@@ -2426,10 +2426,10 @@ func eval2(node *Node) (val int64, label *string) {
         val += int64(node.member.offset)
         return
     case ND_VAR:
-        if node.varObj.ty.kind != TY_ARRAY && node.varObj.ty.kind != TY_FUNC {
+        if node.sym.ty.kind != TY_ARRAY && node.sym.ty.kind != TY_FUNC {
             ErrorTok(node.tok, "invalid initializer")
         }
-        label = &node.varObj.name
+        label = &node.sym.name
         val = 0
         return
     case ND_NUM:
@@ -2445,10 +2445,10 @@ func eval2(node *Node) (val int64, label *string) {
 func evalRval(node *Node) (val int64, label *string) {
     switch node.kind {
     case ND_VAR:
-        if node.varObj.isLocal {
+        if node.sym.isLocal {
             ErrorTok(node.tok, "not a compile-time constant")
         }
-        label = &node.varObj.name
+        label = &node.sym.name
         val = 0
         return
     case ND_DEREF:
@@ -2573,23 +2573,23 @@ func toAssign(binary *Node) *Node {
 
     // Convert `A.x op= C` to `tmp = &A, (*tmp).x = (*tmp).x op C`.
     if binary.lhs.kind == ND_MEMBER {
-        varObj := newLvar("", PointerTo(binary.lhs.lhs.ty))
+        sym := newLvar("", PointerTo(binary.lhs.lhs.ty))
         expr1 := 
             newBinary(
                 ND_ASSIGN, 
-                newVarNode(varObj, tok),
+                newVarNode(sym, tok),
                 newUnary(ND_ADDR, binary.lhs.lhs, tok), 
                 tok)
         expr2 := 
             newUnary(
                 ND_MEMBER,
-                newUnary(ND_DEREF, newVarNode(varObj, tok), tok),
+                newUnary(ND_DEREF, newVarNode(sym, tok), tok),
                 tok)
         expr2.member = binary.lhs.member
         expr3 := 
             newUnary(
                 ND_MEMBER,
-                newUnary(ND_DEREF, newVarNode(varObj, tok), tok),
+                newUnary(ND_DEREF, newVarNode(sym, tok), tok),
                 tok)
         expr3.member = binary.lhs.member
         expr4 := 
@@ -2688,20 +2688,20 @@ func toAssign(binary *Node) *Node {
     }
 
     // Convert `A op= B` to ``tmp = &A, *tmp = *tmp op B`.
-    varObj := newLvar("", PointerTo(binary.lhs.ty))
+    sym := newLvar("", PointerTo(binary.lhs.ty))
     expr1 := 
         newBinary(
             ND_ASSIGN, 
-            newVarNode(varObj, tok),
+            newVarNode(sym, tok),
             newUnary(ND_ADDR, binary.lhs, tok), 
             tok)
     expr2 :=
         newBinary(
             ND_ASSIGN,
-            newUnary(ND_DEREF, newVarNode(varObj, tok), tok),
+            newUnary(ND_DEREF, newVarNode(sym, tok), tok),
             newBinary(
                 binary.kind,
-                newUnary(ND_DEREF, newVarNode(varObj, tok), tok),
+                newUnary(ND_DEREF, newVarNode(sym, tok), tok),
                 binary.rhs,
                 tok),
             tok)
@@ -2811,11 +2811,11 @@ func conditional(tok *Token) (rest *Token, out *Node) {
     if Equal(tok.next, ":") {
         // [GNU] Compile `a ?: b` as `tmp = a, tmp ? tmp : b`.
         AddType(cond)
-        varObj := newLvar("", cond.ty)
-        lhs := newBinary(ND_ASSIGN, newVarNode(varObj, tok), cond, tok)
+        sym := newLvar("", cond.ty)
+        lhs := newBinary(ND_ASSIGN, newVarNode(sym, tok), cond, tok)
         rhs := newNode(ND_COND, tok)
-        rhs.cond = newVarNode(varObj, tok)
-        rhs.then = newVarNode(varObj, tok)
+        rhs.cond = newVarNode(sym, tok)
+        rhs.then = newVarNode(sym, tok)
         rest, rhs.els = conditional(tok.next.next)
         out = newBinary(ND_COMMA, lhs, rhs, tok)
         return
@@ -3596,16 +3596,16 @@ func postfix(tok *Token) (rest *Token, out *Node) {
         tok = Skip(tok, ")")
 
         if scope.next == nil {
-            varObj := newAnonGvar(ty)
-            rest = gvarInitializer(tok, varObj)
-            out = newVarNode(varObj, start)
+            sym := newAnonGvar(ty)
+            rest = gvarInitializer(tok, sym)
+            out = newVarNode(sym, start)
             return
         }
 
-        varObj := newLvar("", ty)
+        sym := newLvar("", ty)
         var lhs *Node
-        rest, lhs = lvarInitializer(tok, varObj)
-        rhs := newVarNode(varObj, tok)
+        rest, lhs = lvarInitializer(tok, sym)
+        rhs := newVarNode(sym, tok)
         out = newBinary(ND_COMMA, lhs, rhs, start)
         return
     }
@@ -3946,17 +3946,17 @@ func primary(tok *Token) (rest *Token, out *Node) {
         rest = tok.next
 
         // For "static inline" function
-        if sc != nil && sc.varObj != nil && sc.varObj.isFunction {
+        if sc != nil && sc.sym != nil && sc.sym.isFunction {
             if currentFn != nil {
-                currentFn.refs = append(currentFn.refs, sc.varObj.name)
+                currentFn.refs = append(currentFn.refs, sc.sym.name)
             } else {
-                sc.varObj.isRoot = true
+                sc.sym.isRoot = true
             }
         }
 
         if sc != nil {
-            if sc.varObj != nil {
-                out = newVarNode(sc.varObj, tok)
+            if sc.sym != nil {
+                out = newVarNode(sc.sym, tok)
                 return
             }
             if sc.enumTy != nil {
@@ -3972,9 +3972,9 @@ func primary(tok *Token) (rest *Token, out *Node) {
     }
 
     if tok.kind == TK_STR {
-        varObj := newStringLiteral(tok.str, tok.ty)
+        sym := newStringLiteral(tok.str, tok.ty)
         rest = tok.next
-        out = newVarNode(varObj, tok)
+        out = newVarNode(sym, tok)
         return
     }
 
@@ -4063,20 +4063,20 @@ func findFunc(name string) *Obj {
     }
 
     sc2, ok := sc.vars[name]
-    if ok && sc2.varObj != nil && sc2.varObj.isFunction {
-        return sc2.varObj
+    if ok && sc2.sym != nil && sc2.sym.isFunction {
+        return sc2.sym
     }
 
     return nil
 }
 
-func markLive(varObj *Obj) {
-    if !varObj.isFunction || varObj.isLive {
+func markLive(sym *Obj) {
+    if !sym.isFunction || sym.isLive {
         return
     }
-    varObj.isLive = true
+    sym.isLive = true
 
-    for _, ref := range varObj.refs {
+    for _, ref := range sym.refs {
         fn := findFunc(ref)
         if fn != nil {
             markLive(fn)
@@ -4149,11 +4149,11 @@ func function(tok *Token, basety *Type, attr *VarAttr) *Token {
     name = append(name, 0)
 
     sc := pushScope("__func__")
-    sc.varObj = newStringLiteral(name, ArrayOf(TyChar, len(name)))
+    sc.sym = newStringLiteral(name, ArrayOf(TyChar, len(name)))
 
     // [GNU] __FUNCTION__ is yet another name of __func__.
     sc = pushScope("__FUNCTION__")
-    sc.varObj = newStringLiteral(name, ArrayOf(TyChar, len(name)))
+    sc.sym = newStringLiteral(name, ArrayOf(TyChar, len(name)))
 
     tok, fn.body = compoundStmt(tok)
     fn.locals = locals
@@ -4183,19 +4183,19 @@ func globalVariable(tok *Token, basety *Type, attr *VarAttr) *Token {
             ErrorTok(ty.namePos, "variable name omitted")
         }
 
-        varObj := newGvar(getIdent(ty.name), ty)
-        varObj.isDefinition = !attr.isExtern
-        varObj.isStatic = attr.isStatic
-        varObj.isTls = attr.isTls
+        sym := newGvar(getIdent(ty.name), ty)
+        sym.isDefinition = !attr.isExtern
+        sym.isStatic = attr.isStatic
+        sym.isTls = attr.isTls
         if attr.align != 0 {
-            varObj.align = attr.align
+            sym.align = attr.align
         }
 
         switch {
         case Equal(tok, "="):
-            tok = gvarInitializer(tok.next, varObj)
+            tok = gvarInitializer(tok.next, sym)
         case !attr.isExtern && !attr.isTls:
-            varObj.isTentative = true
+            sym.isTentative = true
         }
     }
 
@@ -4220,9 +4220,9 @@ func scanGlobals() {
     var head Obj
     cur := &head
 
-    for varObj := globals; varObj != nil; varObj = varObj.next {
-        if !varObj.isTentative {
-            cur.next = varObj
+    for sym := globals; sym != nil; sym = sym.next {
+        if !sym.isTentative {
+            cur.next = sym
             cur = cur.next
             continue
         }
@@ -4230,7 +4230,7 @@ func scanGlobals() {
         // Find another definition of the same identifier.
         var2 := globals
         for ; var2 != nil; var2 = var2.next {
-            if varObj != var2 && var2.isDefinition && varObj.name == var2.name {
+            if sym != var2 && var2.isDefinition && sym.name == var2.name {
                 break
             }
         }
@@ -4238,7 +4238,7 @@ func scanGlobals() {
         // If there's another definition, the tentative definition
         // is redundant
         if var2 == nil {
-            cur.next = varObj
+            cur.next = sym
             cur = cur.next
         }
     }
@@ -4280,9 +4280,9 @@ func Parse(tok *Token) *Obj {
         tok = globalVariable(tok, basety, &attr)
     }
 
-    for varObj := globals; varObj != nil; varObj = varObj.next {
-        if varObj.isRoot {
-            markLive(varObj)
+    for sym := globals; sym != nil; sym = sym.next {
+        if sym.isRoot {
+            markLive(sym)
         }
     }
 
